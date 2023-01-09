@@ -1,0 +1,12 @@
+[package]
+name = "bpf-lite"
+version = "0.0.0"
+edition = "2021"
+description = "Interact with Linux bpf/netlink, pure Rust"
+
+# FIXME: there's got to be a more minimal syscall library. Also: maybe we can
+# let the caller provide a v-table of functions to use for the system
+# interface, instead?
+[dependencies.libc]
+version = "0.2.108"
+default-features = false
