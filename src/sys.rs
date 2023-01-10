@@ -17,25 +17,29 @@ pub struct SysVTable {
     pub sysconf: FnSysconf,
     pub open: FnOpen,
     pub close: FnClose,
-
     /* mmap, munmap */
     // mkdir, unlink, for pin
     // statfs
 
     // Unknown for perf/trace
     // But includes syscall(__NR_perf_event_open
+    pub errno_location: FnErrnoLocation,
 }
+
+#[derive(Clone)]
+pub struct ArcTable(pub Arc<dyn AsRef<SysVTable> + Send + Sync>);
 
 // Glibc strikes again: <https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=758911>
 // Author didn't even make 'better error reporting' precise. _how_ better?
 #[allow(non_camel_case_types)]
-
 #[cfg(target_env = "gnu")]
 pub type rlimit_resource = libc::__rlimit_resource_t;
 #[cfg(not(target_env = "gnu"))] // How posix intended..
 pub type rlimit_resource = libc::c_int;
 
 use libc::{c_char, c_int, c_long, c_void, msghdr, size_t, sockaddr, socklen_t, ssize_t};
+
+use crate::Errno;
 
 pub type FnSocket = unsafe extern "C" fn(c_int, c_int, c_int) -> c_int;
 pub type FnSetSockOpt =
@@ -54,9 +58,11 @@ pub type FnSysconf = unsafe extern "C" fn(c_int) -> c_long;
 pub type FnOpen = unsafe extern "C" fn(*const c_char, c_int, libc::mode_t) -> c_int;
 pub type FnClose = unsafe extern "C" fn(c_int) -> c_int;
 
+pub type FnErrnoLocation = unsafe extern "C" fn() -> *mut c_int;
+
 impl SysVTable {
     /// Create a system table pointing to static (libc) data.
-    pub fn new() -> Arc<dyn AsRef<Self>> {
+    pub fn new() -> ArcTable {
         unsafe extern "C" fn _open(msg: *const c_char, flags: c_int, mode: libc::mode_t) -> c_int {
             libc::open(msg, flags, mode)
         }
@@ -76,6 +82,8 @@ impl SysVTable {
             sysconf: libc::sysconf,
             open: _open,
             close: libc::close,
+
+            errno_location: libc::__errno_location,
         };
 
         struct FakeSys;
@@ -86,7 +94,19 @@ impl SysVTable {
             }
         }
 
-        Arc::new(FakeSys)
+        ArcTable(Arc::new(FakeSys))
+    }
+
+    pub fn errno(&self) -> Errno {
+        Errno(unsafe { *(self.errno_location)() })
+    }
+}
+
+/// automatically deref to the table definition.
+impl core::ops::Deref for ArcTable {
+    type Target = SysVTable;
+    fn deref(&self) -> &SysVTable {
+        (*self.0).as_ref()
     }
 }
 
@@ -144,4 +164,12 @@ pub struct NlIfInfoReq {
 pub struct NlTcReq {
     hdr: NlMsgHdr,
     msg: TcMsg,
+}
+
+#[repr(C)]
+pub struct SockaddrNl {
+    pub nl_family: libc::sa_family_t,
+    pub nl_pad: libc::c_ushort,
+    pub nl_pid: u32,
+    pub nl_groups: u32,
 }
