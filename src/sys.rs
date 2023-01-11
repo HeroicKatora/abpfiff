@@ -225,7 +225,7 @@ pub struct IfInfoMsg {
 }
 
 unsafe impl bytemuck::Zeroable for IfInfoMsg {}
-unsafe impl bytemuck::NoUninit for IfInfoMsg {}
+unsafe impl bytemuck::Pod for IfInfoMsg {}
 
 /// <linux/rtnetlink.h>
 #[repr(C)]

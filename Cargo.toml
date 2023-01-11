@@ -10,3 +10,8 @@ description = "Interact with Linux bpf/netlink, pure Rust"
 [dependencies.libc]
 version = "0.2.108"
 default-features = false
+
+# Doing 'network IO', for reading buffers and libc default init.
+[dependencies.bytemuck]
+version = "1.7"
+default-features = false

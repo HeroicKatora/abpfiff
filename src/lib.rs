@@ -1,10 +1,21 @@
 #![no_std]
 extern crate alloc;
 
-use sys::ArcTable;
+macro_rules! eprint {
+    ($msg:literal, $($arg:expr),*) => {
+        match ::alloc::format!($msg, $($arg),*) {
+            msg => {
+                unsafe { libc::write(2, msg.as_bytes().as_ptr() as *const _, msg.len()) };
+                $($arg)*
+            }
+        }
+    }
+}
 
+pub mod bpf;
 /// Implementation of netlink operations.
 mod netlink;
+mod nlattr;
 /// Defines the system interface we use.
 pub mod sys;
 
@@ -14,12 +25,13 @@ pub mod elf;
 
 /// Entrypoint, query object IDs attached to a network interface.
 #[repr(C)]
+#[derive(Default)]
 pub struct XdpQuery {
     pub prog_id: u32,
     pub drv_prog_id: u32,
     pub hw_prog_id: u32,
     pub skb_prog_id: u32,
-    pub attach_mod: u8,
+    pub attach_mode: u8,
 }
 
 /// Get state for an object by ID.
@@ -61,7 +73,7 @@ pub use netlink::NetlinkRecvBuffer;
 
 /// An abstract reference to a BPF object.
 pub struct Object {
-    pub id: u32,
+    pub id: core::num::NonZeroU32,
 }
 
 pub struct ProgramFd {
@@ -77,24 +89,6 @@ pub struct Xdp {}
 pub struct Errno(libc::c_int);
 
 struct OwnedFd(libc::c_int, sys::ArcTable);
-
-impl Netlink {
-    pub fn get_raw_fd_by_id(&self, id: Object) -> Result<libc::c_int, Errno> {
-        todo!()
-    }
-
-    pub fn get_progfd_by_id(&self, id: Object) -> Result<ProgramFd, Errno> {
-        let fd = self.get_raw_fd_by_id(id)?;
-        let fd = self.sys().wrap_fd(fd);
-        Ok(ProgramFd { fd })
-    }
-
-    pub fn get_mapfd_by_id(&self, id: Object) -> Result<MapFd, Errno> {
-        let fd = self.get_raw_fd_by_id(id)?;
-        let fd = self.sys().wrap_fd(fd);
-        Ok(MapFd { fd })
-    }
-}
 
 pub fn bpf_obj_get_info_by_fd() {}
 pub fn bpf_object__find_map_by_name() {}

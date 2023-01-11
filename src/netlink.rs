@@ -2,10 +2,11 @@ use alloc::vec::Vec;
 use bytemuck::Zeroable;
 use core::ops::ControlFlow;
 
+use crate::nlattr;
 use crate::sys::{
     ArcTable, IfInfoMsg, LibBfpErrno, NlIfInfoReq, NlMsgErr, NlMsgHdr, NlTcReq, SockaddrNl,
 };
-use crate::{Errno, Netlink, OwnedFd};
+use crate::{Errno, Netlink, OwnedFd, XdpQuery};
 
 pub struct NetlinkRecvBuffer {
     iovec: libc::iovec,
@@ -107,6 +108,99 @@ impl Netlink {
         })
     }
 
+    pub fn sys(&self) -> &ArcTable {
+        &self.sock.1
+    }
+
+    pub fn xdp_query(
+        &mut self,
+        ifindex: u32,
+        buf: &mut NetlinkRecvBuffer,
+    ) -> Result<XdpQuery, Errno> {
+        let mut req = NlIfInfoReq {
+            hdr: NlMsgHdr {
+                nlmsg_type: libc::RTM_GETLINK,
+                nlmsg_flags: NlMsgHdr::NLM_F_DUMP | NlMsgHdr::NLM_F_REQUEST,
+                ..NlMsgHdr::zeroed()
+            },
+            msg: IfInfoMsg {
+                ifi_family: libc::AF_PACKET as u8,
+                ..IfInfoMsg::zeroed()
+            },
+        };
+
+        let sys = self.sys().clone();
+        let mut query = XdpQuery::default();
+        let mut parse_err = Ok(());
+
+        self.sendmsg_if_info(&mut req, buf)?;
+        self.recvmsg_multi(buf, |hdr, data| {
+            Self::link_nlmsg_parse(
+                &sys,
+                hdr,
+                data,
+                |hdr, attr| {
+                    if hdr.ifi_index as u32 != ifindex {
+                        // eprint!("Nested Data: {:?}\n", attr[nlattr::IflaType::IFLA_XDP as usize].data);
+                        return Ok(());
+                    }
+
+                    // eprint!("Nested Data: {:?}\n", nlattr::IflaType::IFLA_XDP as usize);
+                    // eprint!("Nested Data: {:?}\n", attr[nlattr::IflaType::IFLA_XDP as usize].data);
+
+                    let nested = match attr[nlattr::IflaType::IFLA_XDP as usize].data {
+                        Some(data) => data,
+                        None => return Ok(()),
+                    };
+
+                    for attr in &mut attr[..nlattr::IFLA_XDP_MAX] {
+                        *attr = nlattr::Attr::default();
+                    }
+
+                    nlattr::parse(&mut attr[..nlattr::IFLA_XDP_MAX], nested)?;
+                    // eprint!("Nested: {:?}\n", &attr[..nlattr::IFLA_XDP_MAX]);
+
+                    if !attr[nlattr::IflaXdp::IFLA_XDP_ATTACHED as usize].is_set() {
+                        return Ok(());
+                    }
+
+                    query.attach_mode =
+                        attr[nlattr::IflaXdp::IFLA_XDP_ATTACHED as usize].getattr_u8()?;
+
+                    if query.attach_mode == 0 {
+                        return Ok(());
+                    }
+
+                    if attr[nlattr::IflaXdp::IFLA_XDP_PROG_ID as usize].is_set() {
+                        query.prog_id =
+                            attr[nlattr::IflaXdp::IFLA_XDP_PROG_ID as usize].getattr_u32()?;
+                    }
+
+                    if attr[nlattr::IflaXdp::IFLA_XDP_SKB_PROG_ID as usize].is_set() {
+                        query.skb_prog_id =
+                            attr[nlattr::IflaXdp::IFLA_XDP_SKB_PROG_ID as usize].getattr_u32()?;
+                    }
+
+                    if attr[nlattr::IflaXdp::IFLA_XDP_DRV_PROG_ID as usize].is_set() {
+                        query.drv_prog_id =
+                            attr[nlattr::IflaXdp::IFLA_XDP_DRV_PROG_ID as usize].getattr_u32()?;
+                    }
+
+                    if attr[nlattr::IflaXdp::IFLA_XDP_HW_PROG_ID as usize].is_set() {
+                        query.hw_prog_id =
+                            attr[nlattr::IflaXdp::IFLA_XDP_HW_PROG_ID as usize].getattr_u32()?;
+                    }
+
+                    Ok(())
+                },
+                &mut parse_err,
+            )
+        })?;
+
+        Ok(query)
+    }
+
+    /** Low-level methods to interact directly with Netlink. */
     pub fn sendmsg_if_info(
         &mut self,
         req: &mut NlIfInfoReq,
@@ -163,25 +257,60 @@ impl Netlink {
         buffer.recvmsg_multi(self, fn_)
     }
 
-    /// Synchronously query information of an XDP interface.
-    pub(crate) fn bpf_xdp_query(&mut self) {
-        let req = NlIfInfoReq {
-            hdr: NlMsgHdr {
-                nlmsg_type: libc::RTM_GETLINK,
-                nlmsg_flags: NlMsgHdr::NLM_F_DUMP | NlMsgHdr::NLM_F_REQUEST,
-                ..NlMsgHdr::zeroed()
-            },
-            msg: IfInfoMsg {
-                ifi_family: libc::AF_PACKET as u8,
-                ..IfInfoMsg::zeroed()
-            },
+    /// `__dump_link_nlattr`.
+    fn link_nlmsg_parse<F>(
+        sys: &ArcTable,
+        hdr: &NlMsgHdr,
+        data: &[u8],
+        mut f: F,
+        err: &mut Result<(), Errno>,
+    ) -> ControlFlow<()>
+    where
+        F: FnMut(&IfInfoMsg, &mut [nlattr::Attr]) -> Result<(), LibBfpErrno>,
+    {
+        if err.is_err() {
+            return ControlFlow::Break(());
+        }
+
+        let ifohdr = match data.get(..core::mem::size_of::<IfInfoMsg>()) {
+            None => {
+                *err = Err(sys.bpf_err(LibBfpErrno::LIBBPF_ERRNO__NLPARSE));
+                return ControlFlow::Break(());
+            }
+            Some(msg) => msg,
         };
 
-        todo!()
+        let data = &data[core::mem::size_of::<IfInfoMsg>()..];
+        let ifohdr: &IfInfoMsg = match bytemuck::try_from_bytes(ifohdr) {
+            Err(_) => {
+                *err = Err(sys.bpf_err(LibBfpErrno::LIBBPF_ERRNO__NLPARSE));
+                return ControlFlow::Break(());
+            }
+            Ok(msg) => msg,
+        };
+
+        let mut nlattr = [nlattr::Attr::default(); nlattr::IFLA_MAX + 1];
+        match nlattr::parse(&mut nlattr, data) {
+            Err(no) => {
+                *err = Err(sys.bpf_err(no));
+                return ControlFlow::Break(());
+            }
+            Ok(len) => len,
+        }
+
+        match f(ifohdr, &mut nlattr[..]) {
+            Err(no) => {
+                *err = Err(sys.bpf_err(no));
+                return ControlFlow::Break(());
+            }
+            Ok(len) => len,
+        }
+
+        ControlFlow::Continue(())
     }
 
-    pub(crate) fn sys(&self) -> &ArcTable {
-        &self.sock.1
+    fn get_xdp_info() -> ControlFlow<()> {
+        ControlFlow::Continue(())
     }
 }
 
@@ -232,7 +361,7 @@ impl NetlinkRecvBuffer {
          * that, just like in libbpf. However, we can preserve that buffer.
          *
          * */
-        self.buf.reserve(self.buf.len().saturating_sub(4096));
+        self.buf.reserve(4096usize.saturating_sub(self.buf.len()));
 
         let len = unsafe {
             let mhdr = self.prepare_mhdr();
@@ -244,7 +373,7 @@ impl NetlinkRecvBuffer {
         }
 
         self.buf
-            .reserve(self.buf.len().saturating_sub(len as usize));
+            .reserve((len as usize).saturating_sub(self.buf.len()));
 
         let len = unsafe {
             let mhdr = self.prepare_mhdr();
@@ -331,7 +460,7 @@ impl NetlinkRecvBuffer {
 
     /// Helper method, ensuring pointers in the raw FFI structs are ready and valid on use.
     fn prepare_mhdr(&mut self) -> &mut libc::msghdr {
-        self.iovec.iov_len = core::mem::size_of_val(self.buf.as_slice());
+        self.iovec.iov_len = self.buf.capacity();
         self.iovec.iov_base = self.buf.as_mut_ptr() as *mut libc::c_void;
         self.mhdr.msg_iovlen = 1;
         self.mhdr.msg_iov = &mut self.iovec;
@@ -345,12 +474,15 @@ impl NetlinkRecvBuffer {
 
 impl<'a> NlMessage<'a> {
     pub fn next(&mut self) -> Option<(&'a NlMsgHdr, &'a [u8])> {
-        let hdr = bytemuck::try_from_bytes::<NlMsgHdr>(self.buf).ok()?;
+        let hdr = self.buf.get(..core::mem::size_of::<NlMsgHdr>())?;
+        let hdr = bytemuck::try_from_bytes::<NlMsgHdr>(hdr).ok()?;
         self.is_multipart_detected |= (hdr.nlmsg_flags & NlMsgHdr::NLM_F_MULTI) != 0;
 
-        let data = self.buf.get(core::mem::size_of::<NlMsgHdr>()..)?;
+        let end = hdr.nlmsg_len as usize;
+        let data = self.buf.get(core::mem::size_of::<NlMsgHdr>()..end)?;
         // Round up to 4 as per <linux/netlink.h>
         let offset = (hdr.nlmsg_len + 3) & !3;
+
         self.buf = self.buf.get(offset as usize..)?;
 
         Some((hdr, data))
