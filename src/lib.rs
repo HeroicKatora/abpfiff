@@ -25,29 +25,13 @@ pub mod elf;
 
 /// Entrypoint, query object IDs attached to a network interface.
 #[repr(C)]
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct XdpQuery {
     pub prog_id: u32,
     pub drv_prog_id: u32,
     pub hw_prog_id: u32,
     pub skb_prog_id: u32,
     pub attach_mode: u8,
-}
-
-/// Get state for an object by ID.
-/// For instance, get a file descriptor for an object.
-#[repr(C)]
-pub struct BpfGetId {
-    #[doc(
-        alias = "prog_id",
-        alias = "start_id",
-        alias = "map_id",
-        alias = "btf_id",
-        alias = "link_id"
-    )]
-    pub id: u32,
-    pub next_id: u32,
-    pub open_flags: u32,
 }
 
 #[repr(C)]
@@ -80,8 +64,17 @@ pub struct ProgramFd {
     fd: OwnedFd,
 }
 
+/// Encapsulates a map.
+///
+/// Initially, the `MapFd` does not know the actual size of keys and values of this map. However,
+/// since this is a creation-time constant we can discover it later. Before accessing the map you
+/// must discover the info once with `Sys
 pub struct MapFd {
     fd: OwnedFd,
+    /// The number bytes a caller must pass to allow a safe read.
+    key_size_access_requirement: Option<u32>,
+    /// The number mutable bytes a caller must pass to allow a safe write.
+    val_size_access_requirement: Option<u32>,
 }
 
 pub struct Xdp {}

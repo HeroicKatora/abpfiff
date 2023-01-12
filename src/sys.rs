@@ -110,7 +110,7 @@ impl SysVTable {
         Errno(err)
     }
 
-    pub(crate) fn bpf_err(&self, err: LibBfpErrno) -> Errno {
+    pub(crate) fn bpf_err(&self, err: LibBpfErrno) -> Errno {
         Errno(err as libc::c_int)
     }
 }
@@ -286,7 +286,7 @@ unsafe extern "C" fn sys_bpf(cmd: c_long, attr: *mut c_void, size: c_uint) -> c_
 
 #[repr(i32)]
 #[allow(non_camel_case_types, dead_code)]
-pub(crate) enum LibBfpErrno {
+pub(crate) enum LibBpfErrno {
     /* Something wrong in libelf */
     LIBBPF_ERRNO__LIBELF = 4000,
     LIBBPF_ERRNO__FORMAT,   /* BPF object format invalid */

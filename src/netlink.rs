@@ -4,7 +4,7 @@ use core::ops::ControlFlow;
 
 use crate::nlattr;
 use crate::sys::{
-    ArcTable, IfInfoMsg, LibBfpErrno, NlIfInfoReq, NlMsgErr, NlMsgHdr, NlTcReq, SockaddrNl,
+    ArcTable, IfInfoMsg, LibBpfErrno, NlIfInfoReq, NlMsgErr, NlMsgHdr, NlTcReq, SockaddrNl,
 };
 use crate::{Errno, Netlink, OwnedFd, XdpQuery};
 
@@ -266,7 +266,7 @@ impl Netlink {
         err: &mut Result<(), Errno>,
     ) -> ControlFlow<()>
     where
-        F: FnMut(&IfInfoMsg, &mut [nlattr::Attr]) -> Result<(), LibBfpErrno>,
+        F: FnMut(&IfInfoMsg, &mut [nlattr::Attr]) -> Result<(), LibBpfErrno>,
     {
         if err.is_err() {
             return ControlFlow::Break(());
@@ -274,7 +274,7 @@ impl Netlink {
 
         let ifohdr = match data.get(..core::mem::size_of::<IfInfoMsg>()) {
             None => {
-                *err = Err(sys.bpf_err(LibBfpErrno::LIBBPF_ERRNO__NLPARSE));
+                *err = Err(sys.bpf_err(LibBpfErrno::LIBBPF_ERRNO__NLPARSE));
                 return ControlFlow::Break(());
             }
             Some(msg) => msg,
@@ -283,7 +283,7 @@ impl Netlink {
         let data = &data[core::mem::size_of::<IfInfoMsg>()..];
         let ifohdr: &IfInfoMsg = match bytemuck::try_from_bytes(ifohdr) {
             Err(_) => {
-                *err = Err(sys.bpf_err(LibBfpErrno::LIBBPF_ERRNO__NLPARSE));
+                *err = Err(sys.bpf_err(LibBpfErrno::LIBBPF_ERRNO__NLPARSE));
                 return ControlFlow::Break(());
             }
             Ok(msg) => msg,
@@ -411,7 +411,7 @@ impl NetlinkRecvBuffer {
             let mut msg = self.recvmsg_part(from)?;
             'parts: while let Some((hdr, data)) = msg.next() {
                 if hdr.nlmsg_pid != from.pid {
-                    return Err(from.sys().bpf_err(LibBfpErrno::LIBBPF_ERRNO__WRNGPID));
+                    return Err(from.sys().bpf_err(LibBpfErrno::LIBBPF_ERRNO__WRNGPID));
                 }
 
                 if hdr.nlmsg_seq < seq {
@@ -419,7 +419,7 @@ impl NetlinkRecvBuffer {
                 }
 
                 if hdr.nlmsg_seq > seq {
-                    return Err(from.sys().bpf_err(LibBfpErrno::LIBBPF_ERRNO__INVSEQ));
+                    return Err(from.sys().bpf_err(LibBpfErrno::LIBBPF_ERRNO__INVSEQ));
                 }
 
                 match hdr.nlmsg_type {
@@ -429,7 +429,7 @@ impl NetlinkRecvBuffer {
                         // kernel? Eh, let's verify and fail with something useful.
                         let err = match bytemuck::try_from_bytes::<NlMsgErr>(data) {
                             Err(_) => {
-                                return Err(from.sys().bpf_err(LibBfpErrno::LIBBPF_ERRNO__INTERNAL))
+                                return Err(from.sys().bpf_err(LibBpfErrno::LIBBPF_ERRNO__INTERNAL))
                             }
                             Ok(err) => err,
                         };

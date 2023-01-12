@@ -1,4 +1,4 @@
-use crate::sys::LibBfpErrno;
+use crate::sys::LibBpfErrno;
 
 #[repr(u16)]
 #[allow(non_camel_case_types)]
@@ -106,7 +106,7 @@ struct NlAttr {
 unsafe impl bytemuck::Zeroable for NlAttr {}
 unsafe impl bytemuck::Pod for NlAttr {}
 
-pub(crate) fn parse<'d>(into: &mut [Attr<'d>], mut data: &'d [u8]) -> Result<(), LibBfpErrno> {
+pub(crate) fn parse<'d>(into: &mut [Attr<'d>], mut data: &'d [u8]) -> Result<(), LibBpfErrno> {
     loop {
         let nla = match data.get(..core::mem::size_of::<NlAttr>()) {
             // FIXME: huh, partial data is treated as okay.
@@ -122,14 +122,14 @@ pub(crate) fn parse<'d>(into: &mut [Attr<'d>], mut data: &'d [u8]) -> Result<(),
         let len = usize::from(nl_attr.len);
 
         if !(core::mem::size_of::<NlAttr>() < len) {
-            return Err(LibBfpErrno::LIBBPF_ERRNO__NLPARSE);
+            return Err(LibBpfErrno::LIBBPF_ERRNO__NLPARSE);
         }
 
         let pad_len = (len + 3) & !3;
         let nla_data;
 
         match data.get(pad_len..) {
-            None => return Err(LibBfpErrno::LIBBPF_ERRNO__NLPARSE),
+            None => return Err(LibBpfErrno::LIBBPF_ERRNO__NLPARSE),
             Some(tail) => {
                 nla_data = &data[core::mem::size_of::<NlAttr>()..len];
                 data = tail;
@@ -151,19 +151,19 @@ impl Attr<'_> {
         self.data.is_some()
     }
 
-    pub fn getattr_u8(&self) -> Result<u8, LibBfpErrno> {
+    pub fn getattr_u8(&self) -> Result<u8, LibBpfErrno> {
         if let Some([val]) = self.data {
             Ok(*val)
         } else {
-            Err(LibBfpErrno::LIBBPF_ERRNO__NLPARSE)
+            Err(LibBpfErrno::LIBBPF_ERRNO__NLPARSE)
         }
     }
 
-    pub fn getattr_u32(&self) -> Result<u32, LibBfpErrno> {
+    pub fn getattr_u32(&self) -> Result<u32, LibBpfErrno> {
         if let Some(&[a, b, c, d]) = self.data {
             Ok(u32::from_ne_bytes([a, b, c, d]))
         } else {
-            Err(LibBfpErrno::LIBBPF_ERRNO__NLPARSE)
+            Err(LibBpfErrno::LIBBPF_ERRNO__NLPARSE)
         }
     }
 }
