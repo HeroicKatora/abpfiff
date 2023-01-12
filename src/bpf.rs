@@ -3,7 +3,7 @@ use crate::{
     sys::{ArcTable, LibBpfErrno},
     Errno, MapFd, Object, ProgramFd,
 };
-use core::num::NonZeroU32;
+use core::{ffi::CStr, num::NonZeroU32};
 
 mod sealed {
     /// A dyn-compatible version of `bytemuck::AnyBitPattern`.
@@ -95,6 +95,12 @@ impl ArcTable {
         unsafe { self.raw_info_by_fd(prog.as_raw_fd(), data) }
     }
 
+    pub fn get_progfd_pinned(&self, path: &CStr) -> Result<ProgramFd, Errno> {
+        let fd = self.raw_obj_fd_get(path)?;
+        let fd = self.wrap_fd(fd);
+        Ok(ProgramFd { fd })
+    }
+
     /// Fetch a map entry.
     ///
     /// The map info must have been retrieved with `get_mapfd_info_mut` previously since the map
@@ -181,6 +187,32 @@ impl ArcTable {
         let fd = unsafe {
             (self.bpf)(
                 cmd as libc::c_long,
+                (&mut attr) as *mut _ as *mut libc::c_void,
+                attr_sz,
+            )
+        };
+
+        if fd < 0 {
+            return Err(self.errno());
+        }
+
+        match libc::c_int::try_from(fd) {
+            Ok(fd) => Ok(fd),
+            Err(_) => Err(self.bpf_err(LibBpfErrno::LIBBPF_ERRNO__INTERNAL)),
+        }
+    }
+
+    pub(crate) fn raw_obj_fd_get(&self, path: &CStr) -> Result<libc::c_int, Errno> {
+        let mut attr = BpfObjByPath {
+            pathname: ValAddr(path.as_ptr() as u64),
+            bpf_fd: 0,
+            file_flags: 0,
+        };
+
+        let attr_sz = core::mem::size_of_val(&attr) as u32;
+        let fd = unsafe {
+            (self.bpf)(
+                BpfCmd::ObjGet as libc::c_long,
                 (&mut attr) as *mut _ as *mut libc::c_void,
                 attr_sz,
             )
@@ -360,9 +392,13 @@ struct BpfBtfInfo {
     pub kernel_btf: u32,
 }
 
+unsafe impl bytemuck::Zeroable for BpfBtfInfo {}
+unsafe impl bytemuck::Pod for BpfBtfInfo {}
+
 /// Get state for an object by ID. For instance, get a file descriptor for an object.
 /// The raw argument struct of `bpf(BPF_*_GET_*_ID, ..)`
 #[repr(C)]
+#[derive(Debug, Clone, Copy)]
 pub struct BpfGetId {
     #[doc(
         alias = "prog_id",
@@ -376,8 +412,20 @@ pub struct BpfGetId {
     pub open_flags: u32,
 }
 
-unsafe impl bytemuck::Zeroable for BpfBtfInfo {}
-unsafe impl bytemuck::Pod for BpfBtfInfo {}
+unsafe impl bytemuck::Zeroable for BpfGetId {}
+unsafe impl bytemuck::Pod for BpfGetId {}
+
+/// Modify some object by path.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct BpfObjByPath {
+    pub pathname: ValAddr,
+    pub bpf_fd: u32,
+    pub file_flags: u32,
+}
+
+unsafe impl bytemuck::Zeroable for BpfObjByPath {}
+unsafe impl bytemuck::Pod for BpfObjByPath {}
 
 #[repr(C)]
 #[derive(Default, Debug, Clone, Copy)]

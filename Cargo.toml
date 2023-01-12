@@ -4,6 +4,11 @@ version = "0.0.0"
 edition = "2021"
 description = "Interact with Linux bpf/netlink, pure Rust"
 
+exclude = [
+	# Partly due to license
+	"bpf-examples"
+]
+
 # FIXME: there's got to be a more minimal syscall library. Also: maybe we can
 # let the caller provide a v-table of functions to use for the system
 # interface, instead?
