@@ -112,23 +112,23 @@ impl ArcTable {
     ///
     /// * `&mut [u8]` is too strong a requirement, as the bytes don't need to be initialized.
     /// * `&mut dyn _` is not possible as the trait is not object safe (`Copy`).
-    pub fn lookup_map_element(
+    pub fn map_lookup_element(
         &self,
         map: &MapFd,
         key: &dyn sealed::ParameterPod,
         val: &mut dyn sealed::OutputAnyBitPattern,
     ) -> Result<(u32, u32), Errno> {
         let key_sz = match map.key_size_access_requirement {
-            Some(sz) if u32::try_from(core::mem::size_of_val(key)).unwrap_or(u32::MAX) >= sz => sz,
+            Some(sz) if u32::try_from(core::mem::size_of_val(key)).unwrap_or(u32::MAX) == sz => sz,
             _ => return Err(self.mk_errno(libc::EINVAL)),
         };
 
         let val_sz = match map.val_size_access_requirement {
-            Some(sz) if u32::try_from(core::mem::size_of_val(val)).unwrap_or(u32::MAX) >= sz => sz,
+            Some(sz) if u32::try_from(core::mem::size_of_val(val)).unwrap_or(u32::MAX) == sz => sz,
             _ => return Err(self.mk_errno(libc::EINVAL)),
         };
 
-        let mut attr = BpfMapGetElem {
+        let mut attr = BpfMapElement {
             map_fd: map.fd.0 as u32,
             key: ValAddr(key as *const _ as *const u8 as u64),
             value: ValAddr(val as *mut _ as *mut u8 as u64),
@@ -139,6 +139,44 @@ impl ArcTable {
         if unsafe {
             (self.bpf)(
                 BpfCmd::MapLookupElem as i64,
+                (&mut attr) as *mut _ as *mut libc::c_void,
+                attr_sz,
+            )
+        } < 0
+        {
+            return Err(self.errno());
+        } else {
+            Ok((key_sz, val_sz))
+        }
+    }
+
+    pub fn map_update_element(
+        &self,
+        map: &MapFd,
+        key: &dyn sealed::ParameterPod,
+        val: &dyn sealed::ParameterPod,
+    ) -> Result<(u32, u32), Errno> {
+        let key_sz = match map.key_size_access_requirement {
+            Some(sz) if u32::try_from(core::mem::size_of_val(key)).unwrap_or(u32::MAX) == sz => sz,
+            _ => return Err(self.mk_errno(libc::EINVAL)),
+        };
+
+        let val_sz = match map.val_size_access_requirement {
+            Some(sz) if u32::try_from(core::mem::size_of_val(val)).unwrap_or(u32::MAX) == sz => sz,
+            _ => return Err(self.mk_errno(libc::EINVAL)),
+        };
+
+        let mut attr = BpfMapElement {
+            map_fd: map.fd.0 as u32,
+            key: ValAddr(key as *const _ as *const u8 as u64),
+            value: ValAddr(val as *const _ as *const u8 as u64),
+            ..bytemuck::Zeroable::zeroed()
+        };
+
+        let attr_sz = core::mem::size_of_val(&attr) as u32;
+        if unsafe {
+            (self.bpf)(
+                BpfCmd::MapUpdateElem as i64,
                 (&mut attr) as *mut _ as *mut libc::c_void,
                 attr_sz,
             )
@@ -429,7 +467,7 @@ unsafe impl bytemuck::Pod for BpfObjByPath {}
 
 #[repr(C)]
 #[derive(Default, Debug, Clone, Copy)]
-pub struct BpfMapGetElem {
+pub struct BpfMapElement {
     pub map_fd: u32,
     pub _pad: u32,
     pub key: ValAddr,
@@ -438,8 +476,8 @@ pub struct BpfMapGetElem {
     pub flags: u64,
 }
 
-unsafe impl bytemuck::Zeroable for BpfMapGetElem {}
-unsafe impl bytemuck::Pod for BpfMapGetElem {}
+unsafe impl bytemuck::Zeroable for BpfMapElement {}
+unsafe impl bytemuck::Pod for BpfMapElement {}
 
 impl BpfCmd {
     #[allow(non_upper_case_globals)]
