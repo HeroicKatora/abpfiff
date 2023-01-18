@@ -138,7 +138,7 @@ impl ArcTable {
         let attr_sz = core::mem::size_of_val(&attr) as u32;
         if unsafe {
             (self.bpf)(
-                BpfCmd::MapLookupElem as i64,
+                BpfCmd::MapLookupElem as libc::c_long,
                 (&mut attr) as *mut _ as *mut libc::c_void,
                 attr_sz,
             )
@@ -176,7 +176,7 @@ impl ArcTable {
         let attr_sz = core::mem::size_of_val(&attr) as u32;
         if unsafe {
             (self.bpf)(
-                BpfCmd::MapUpdateElem as i64,
+                BpfCmd::MapUpdateElem as libc::c_long,
                 (&mut attr) as *mut _ as *mut libc::c_void,
                 attr_sz,
             )

@@ -17,6 +17,8 @@ pub struct NetlinkRecvBuffer {
     seq: u32,
 }
 
+/// Just for reference, the command constants.
+#[allow(dead_code)]
 impl Netlink {
     const ADD_MEMBERSHIP: libc::c_int = 1;
     const DROP_MEMBERSHIP: libc::c_int = 2;
@@ -30,7 +32,9 @@ impl Netlink {
     const CAP_ACK: libc::c_int = 10;
     const EXT_ACK: libc::c_int = 11;
     const GET_STRICT_CHK: libc::c_int = 12;
+}
 
+impl Netlink {
     pub fn open(sys: ArcTable) -> Result<Self, Errno> {
         let sock = unsafe {
             (sys.socket)(
@@ -260,7 +264,7 @@ impl Netlink {
     /// `__dump_link_nlattr`.
     fn link_nlmsg_parse<F>(
         sys: &ArcTable,
-        hdr: &NlMsgHdr,
+        _: &NlMsgHdr,
         data: &[u8],
         mut f: F,
         err: &mut Result<(), Errno>,
