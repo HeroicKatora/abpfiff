@@ -4,6 +4,10 @@ Just simple, pure idiomatic Rust-based bindings to manage user-space state
 necessary for interacting with the kernel system. Some little helpers are added
 but not beyond the minimalism (avoids generics or extra dependencies).
 
+The name is bacronym for:
+
+> A BPF InterFace Foundation
+
 ## Goals
 
 In decreasing order of priority.
