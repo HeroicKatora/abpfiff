@@ -5,6 +5,7 @@ version = "0.1.0"
 description = "Interaction with Linux BPF(2). No libbpf-sys."
 
 license = "EUPL-1.2"
+readme = "Readme.md"
 authors = ["Andreas Molzer"]
 categories = ["network-programming", "os::linux-apis", "no-std"]
 repository = "https://github.com/HeroicKatora/abpfiff"
