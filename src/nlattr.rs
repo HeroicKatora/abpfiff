@@ -1,4 +1,5 @@
-use crate::sys::LibBpfErrno;
+use crate::sys::{LibBpfErrno, NlIfInfoReq};
+use alloc::vec::Vec;
 
 #[repr(u16)]
 #[allow(non_camel_case_types)]
@@ -73,6 +74,8 @@ pub enum IflaType {
 }
 
 pub const IFLA_MAX: usize = IflaType::__IFLA_MAX as usize;
+pub const NLA_F_NESTED: u16 = 1 << 15;
+pub const NLA_F_NET_BYTEORDER: u16 = 1 << 15;
 
 #[repr(u16)]
 #[allow(non_camel_case_types)]
@@ -105,6 +108,11 @@ struct NlAttr {
 
 unsafe impl bytemuck::Zeroable for NlAttr {}
 unsafe impl bytemuck::Pod for NlAttr {}
+
+pub(crate) struct Formatter<'a> {
+    pub(crate) buffer: &'a mut Vec<u8>,
+    pub(crate) attr_start: Option<usize>,
+}
 
 pub(crate) fn parse<'d>(into: &mut [Attr<'d>], mut data: &'d [u8]) -> Result<(), LibBpfErrno> {
     loop {
@@ -146,6 +154,15 @@ pub(crate) fn parse<'d>(into: &mut [Attr<'d>], mut data: &'d [u8]) -> Result<(),
     Ok(())
 }
 
+pub(crate) fn format<'d>(into: &'d mut Vec<u8>, head: &NlIfInfoReq) -> Formatter<'d> {
+    into.clear();
+    into.extend_from_slice(bytemuck::bytes_of(head));
+    Formatter {
+        buffer: into,
+        attr_start: None,
+    }
+}
+
 impl Attr<'_> {
     pub fn is_set(&self) -> bool {
         self.data.is_some()
@@ -165,5 +182,61 @@ impl Attr<'_> {
         } else {
             Err(LibBpfErrno::LIBBPF_ERRNO__NLPARSE)
         }
+    }
+}
+
+impl<'a> Formatter<'a> {
+    pub fn begin_nested(&mut self, attr: IflaType) {
+        debug_assert!(self.attr_start.is_none());
+        self.pad_to_nlattr();
+        // Note the start position.
+        self.attr_start = Some(self.buffer.len());
+
+        self.buffer.extend_from_slice(bytemuck::bytes_of(&NlAttr {
+            type_: (attr as u16 | NLA_F_NESTED),
+            len: 0,
+        }));
+
+        todo!()
+    }
+
+    pub fn xdp_add(&mut self, attr: IflaXdp, val: u32) {
+        debug_assert!(self.attr_start.is_some());
+        self.pad_to_nlattr();
+
+        self.buffer.extend_from_slice(bytemuck::bytes_of(&NlAttr {
+            type_: attr as u16,
+            len: (core::mem::size_of::<NlAttr>() + 4) as u16,
+        }));
+
+        self.buffer.extend_from_slice(bytemuck::bytes_of(&val));
+    }
+
+    pub fn end_nested(&mut self) {
+        use bytemuck::Zeroable;
+        let start = self.attr_start.take().unwrap();
+        let end = self.buffer.len();
+
+        let mut attr = NlAttr::zeroed();
+        let attr_bytes = &mut self.buffer[start..][..core::mem::size_of::<NlAttr>()];
+        bytemuck::bytes_of_mut(&mut attr).copy_from_slice(attr_bytes);
+        attr.len = (end - start) as u16;
+        attr_bytes.copy_from_slice(bytemuck::bytes_of_mut(&mut attr));
+    }
+
+    /// Ensure the past-the-end is aligned.
+    pub fn pad_to_nlattr(&mut self) {
+        let align = self.buffer.len() & 0x3;
+
+        if align > 0 {
+            self.buffer.extend_from_slice(&[0; 4][..4 - align]);
+        }
+    }
+
+    /// Finish the builder.
+    ///
+    /// Return the buffer buffer and reference to the header.
+    pub fn finish(self) -> (&'a [u8], &'a NlIfInfoReq) {
+        todo!()
     }
 }

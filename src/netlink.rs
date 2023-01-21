@@ -32,6 +32,12 @@ impl Netlink {
     const CAP_ACK: libc::c_int = 10;
     const EXT_ACK: libc::c_int = 11;
     const GET_STRICT_CHK: libc::c_int = 12;
+
+    const FLAGS_UPDATE_IF_NOEXIST: u32 = 1 << 0;
+    const FLAGS_SKB_MODE: u32 = 1 << 1;
+    const FLAGS_DRV_MODE: u32 = 1 << 2;
+    const FLAGS_HW_MODE: u32 = 1 << 3;
+    const FLAGS_REPLACE: u32 = 1 << 4;
 }
 
 impl Netlink {
@@ -204,6 +210,52 @@ impl Netlink {
         Ok(query)
     }
 
+    pub fn xdp_replace(
+        &mut self,
+        ifindex: u32,
+        fd: libc::c_int,
+        expected: Option<libc::c_int>,
+        mut flags: u32,
+        buf: &mut NetlinkRecvBuffer,
+    ) -> Result<(), Errno> {
+        let req = NlIfInfoReq {
+            hdr: NlMsgHdr {
+                nlmsg_flags: NlMsgHdr::NLM_F_ACK | NlMsgHdr::NLM_F_REQUEST,
+                nlmsg_type: libc::RTM_SETLINK,
+                ..NlMsgHdr::zeroed()
+            },
+            msg: IfInfoMsg {
+                ifi_family: libc::AF_PACKET as u8,
+                ifi_index: ifindex as i32,
+                ..IfInfoMsg::zeroed()
+            },
+        };
+
+        if expected.is_some() {
+            flags |= flags & Netlink::FLAGS_REPLACE;
+        } else if (flags & Netlink::FLAGS_REPLACE) != 0 {
+            return Err(self.sys().mk_errno(libc::EINVAL));
+        }
+
+        let mut fmt = nlattr::format(&mut self.buf, &req);
+        fmt.begin_nested(nlattr::IflaType::IFLA_XDP);
+        fmt.xdp_add(nlattr::IflaXdp::IFLA_XDP_FD, fd as u32);
+
+        if flags != 0 {
+            fmt.xdp_add(nlattr::IflaXdp::IFLA_XDP_FLAGS, flags);
+        }
+
+        if let Some(expected) = expected {
+            fmt.xdp_add(nlattr::IflaXdp::IFLA_XDP_EXPECTED_FD, expected as u32);
+        }
+
+        fmt.end_nested();
+        fmt.finish();
+
+        self.sendmsg_buffer(buf)?;
+        Ok(())
+    }
+
     /** Low-level methods to interact directly with Netlink. */
     pub fn sendmsg_if_info(
         &mut self,
@@ -227,6 +279,37 @@ impl Netlink {
         req.hdr.nlmsg_seq = self.seq;
         req.hdr.nlmsg_len = nlmsg_len as u32;
         unsafe { self.sendmsg_after_len(req as *mut _ as *const _, nlmsg_len, buf) }
+    }
+
+    pub(crate) fn sendmsg_buffer(&mut self, buf: &mut NetlinkRecvBuffer) -> Result<(), Errno> {
+        // Save the current length as the supposed message length.
+        // Then appropriately align the buffer.
+        const SIZE: usize = core::mem::size_of::<NlMsgHdr>();
+        const ALIGN: usize = core::mem::align_of::<NlMsgHdr>();
+
+        let nlmsg_len = self.buf.len();
+        self.buf.extend_from_slice(&[0u8; ALIGN]);
+        let data = self.buf.as_mut_slice();
+        let align = (data.as_ptr() as usize) % ALIGN;
+
+        let offset = if align == 0 {
+            0
+        } else {
+            data.rotate_right(ALIGN - align);
+            ALIGN - align
+        };
+
+        let hdr: &mut NlMsgHdr = match bytemuck::try_from_bytes_mut(&mut data[offset..][..SIZE]) {
+            Ok(hdr) => hdr,
+            Err(_) => return Err(self.sys().mk_errno(libc::EINVAL)),
+        };
+
+        hdr.nlmsg_pid = 0;
+        hdr.nlmsg_seq = self.seq;
+        hdr.nlmsg_len = nlmsg_len as u32;
+
+        let hdr = (&data[offset..]) as *const _ as *const _;
+        unsafe { self.sendmsg_after_len(hdr, nlmsg_len, buf) }
     }
 
     pub(crate) unsafe fn sendmsg_after_len(
