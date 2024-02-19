@@ -129,7 +129,8 @@ pub(crate) fn parse<'d>(into: &mut [Attr<'d>], mut data: &'d [u8]) -> Result<(),
 
         let len = usize::from(nl_attr.len);
 
-        if !(core::mem::size_of::<NlAttr>() < len) {
+        if !(core::mem::size_of::<NlAttr>() <= len) {
+            eprint!("Too small for nlattr {}\n", len);
             return Err(LibBpfErrno::LIBBPF_ERRNO__NLPARSE);
         }
 
@@ -137,7 +138,10 @@ pub(crate) fn parse<'d>(into: &mut [Attr<'d>], mut data: &'d [u8]) -> Result<(),
         let nla_data;
 
         match data.get(pad_len..) {
-            None => return Err(LibBpfErrno::LIBBPF_ERRNO__NLPARSE),
+            None => {
+                eprint!("Too small for pad {}\n", data.len());
+                return Err(LibBpfErrno::LIBBPF_ERRNO__NLPARSE)
+            },
             Some(tail) => {
                 nla_data = &data[core::mem::size_of::<NlAttr>()..len];
                 data = tail;

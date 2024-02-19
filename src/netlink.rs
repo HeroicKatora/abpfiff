@@ -150,8 +150,10 @@ impl Netlink {
                 hdr,
                 data,
                 |hdr, attr| {
+                    eprint!("Nested Data: {:?}\n", (line!(), attr[nlattr::IflaType::IFLA_XDP as usize].data));
+
                     if hdr.ifi_index as u32 != ifindex {
-                        // eprint!("Nested Data: {:?}\n", attr[nlattr::IflaType::IFLA_XDP as usize].data);
+                        eprint!("Nested Data: {:?}\n", (line!(), attr[nlattr::IflaType::IFLA_XDP as usize].data));
                         return Ok(());
                     }
 
@@ -160,7 +162,10 @@ impl Netlink {
 
                     let nested = match attr[nlattr::IflaType::IFLA_XDP as usize].data {
                         Some(data) => data,
-                        None => return Ok(()),
+                        None => {
+                            eprint!("Nested Data: {:?}\n", (line!(), attr[nlattr::IflaType::IFLA_XDP as usize].data));
+                            return Ok(());
+                        }
                     };
 
                     for attr in &mut attr[..nlattr::IFLA_XDP_MAX] {
@@ -171,6 +176,7 @@ impl Netlink {
                     // eprint!("Nested: {:?}\n", &attr[..nlattr::IFLA_XDP_MAX]);
 
                     if !attr[nlattr::IflaXdp::IFLA_XDP_ATTACHED as usize].is_set() {
+                        eprint!("Nested Data: {:?}\n", (line!(), attr[nlattr::IflaType::IFLA_XDP as usize].data));
                         return Ok(());
                     }
 
@@ -178,6 +184,7 @@ impl Netlink {
                         attr[nlattr::IflaXdp::IFLA_XDP_ATTACHED as usize].getattr_u8()?;
 
                     if query.attach_mode == 0 {
+                        eprint!("Nested Data: {:?}\n", (line!(), attr[nlattr::IflaType::IFLA_XDP as usize].data));
                         return Ok(());
                     }
 
@@ -201,12 +208,14 @@ impl Netlink {
                             attr[nlattr::IflaXdp::IFLA_XDP_HW_PROG_ID as usize].getattr_u32()?;
                     }
 
+                    eprint!("Nested Data: {:?}\n", (line!(), attr[nlattr::IflaType::IFLA_XDP as usize].data));
                     Ok(())
                 },
                 &mut parse_err,
             )
         })?;
 
+        parse_err?;
         Ok(query)
     }
 
@@ -359,6 +368,7 @@ impl Netlink {
             return ControlFlow::Break(());
         }
 
+        eprint!("{}\n", "No Err");
         let ifohdr = match data.get(..core::mem::size_of::<IfInfoMsg>()) {
             None => {
                 *err = Err(sys.bpf_err(LibBpfErrno::LIBBPF_ERRNO__NLPARSE));
@@ -367,32 +377,39 @@ impl Netlink {
             Some(msg) => msg,
         };
 
+        eprint!("{}\n", "ifohdr");
         let data = &data[core::mem::size_of::<IfInfoMsg>()..];
         let ifohdr: &IfInfoMsg = match bytemuck::try_from_bytes(ifohdr) {
             Err(_) => {
+                eprint!("Err {:?}\n", "ifoinfo");
                 *err = Err(sys.bpf_err(LibBpfErrno::LIBBPF_ERRNO__NLPARSE));
                 return ControlFlow::Break(());
             }
             Ok(msg) => msg,
         };
 
+        eprint!("{}\n", "ifoinfo");
         let mut nlattr = [nlattr::Attr::default(); nlattr::IFLA_MAX + 1];
         match nlattr::parse(&mut nlattr, data) {
             Err(no) => {
+                eprint!("Err {:?}\n", "attr");
                 *err = Err(sys.bpf_err(no));
                 return ControlFlow::Break(());
             }
             Ok(len) => len,
         }
 
+        eprint!("{}\n", "attr");
         match f(ifohdr, &mut nlattr[..]) {
             Err(no) => {
+                eprint!("Err {:?}\n", "cont");
                 *err = Err(sys.bpf_err(no));
                 return ControlFlow::Break(());
             }
             Ok(len) => len,
         }
 
+        eprint!("{}\n", "cont");
         ControlFlow::Continue(())
     }
 
